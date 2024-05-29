@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  PrivateS3Bucket:
+          Type: AWS::S3::Bucket
+          Properties:
+              BucketName: cloudfront-s3-origin
+
+  FrontEndOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties: 
+      OriginAccessControlConfig: 
+        Description: 'Limiting access to buckets to CloudFront only.'
+        Name: 'PrivateS3BucketOriginAccessControl'
+        OriginAccessControlOriginType: 's3'
+        SigningBehavior: 'always'
+        SigningProtocol: 'sigv4'
+
+  PublicCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+          - Id: S3-private-bucket
+            DomainName: !GetAtt PrivateS3Bucket.RegionalDomainName
+            S3OriginConfig: 
+              OriginAccessIdentity: ''
+            OriginAccessControlId: !GetAtt FrontEndOriginAccessControl.Id    
+        Enabled: 'true'
+        Comment: Some comment
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+          TargetOriginId: S3-private-bucket
+          CachePolicyId: '658327ea-f89d-4fab-a63d-7e88639e58f6'
+          OriginRequestPolicyId: '88a5eaf4-2fd4-4709-b370-b4c650ea3fcf'
+          ViewerProtocolPolicy: redirect-to-https
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: 'true'
+
+  BucketPolicy:
+    DependsOn: 
+      - PublicCloudFrontDistribution
+      - PrivateS3Bucket
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PrivateS3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 'cloudfront.amazonaws.com'
+            Action: 's3:GetObject'
+            Resource: !Join
+              - ''
+              - - !GetAtt PrivateS3Bucket.Arn
+                - /*
+            Condition:
+              StringEquals:
+                'AWS:SourceArn': !Join
+                  - ''
+                  - - 'arn:aws:cloudfront::'
+                    - !Ref 'AWS::AccountId'
+                    - ':distribution/'
+                    - !GetAtt PublicCloudFrontDistribution.Id
